@@ -1,0 +1,107 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# Virtual Environment
+abhiyanai_env/
+venv/
+env/
+ENV/
+
+# Generated Files
+backend/generated_videos/
+backend/voice_reference/
+backend/cloned_voices/
+backend/tts/
+backend/uploads/
+backend/temp_*
+*.tmp
+
+# Generated content at root level  
+generated_videos/
+voice_reference/
+cloned_voices/
+tts/
+uploads/
+
+# Version directories (from pip installs)
+backend/0.10.0
+backend/0.13.0  
+backend/1.13.0
+backend/4.21.0
+
+# Test files
+test_output.mp3
+test_tts.py
+check_voices.py
+advanced_voice_cloning.py
+voice_quality_check.py
+
+# FFmpeg temp files
+temp_normalized_audio_*.wav
+*_temp_audio_*.m4a
+*_original_audio_*.mp3
+
+# OpenVoice models (large files)
+backend/openvoice/
+backend/temp_openvoice/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+logs/
+
+# Configuration files with secrets
+appsettings.json
+appsettings.*.json
+!appsettings.Development.json.template
+
+# NuGet
+packages/
+*.nupkg
+
+# Build results
+bin/
+obj/
+
+# Keep template videos but ignore generated ones
+!backend/templates/*.mp4
+backend/generated_videos/*.mp4
+
+# Keep sample audio files
+!backend/tts/Amol_Adkitee.mp3
+!backend/tts/Amol_Adkitee.wav
+!backend/tts/Atul_Kadam.mp3
+!backend/tts/Atul_Kadam.wav
+!backend/tts/Atul_Patil.mp3
+!backend/tts/Atul_Patil.wav
