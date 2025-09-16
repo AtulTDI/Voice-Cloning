@@ -190,44 +190,106 @@ def clone_voice(tts_wav_path: str, cloned_wav_path: str, reference_wav_path: str
         try:
             print("🧬 Attempting OpenVoice cloning...")
             
-            # Extend audio files if they're too short for voice cloning
+            # ALWAYS extend audio files to prevent "too short" errors
+            print("⚡ Pre-processing audio files...")
             extended_tts = extend_short_audio(tts_wav_path, min_duration=3.0)
             extended_ref = extend_short_audio(reference_wav_path, min_duration=5.0)
             
-            # Set environment variables for SSL bypass and offline mode
-            env = os.environ.copy()
-            env.update({
-                'CURL_CA_BUNDLE': '',
-                'REQUESTS_CA_BUNDLE': '',
-                'SSL_VERIFY': '0',
-                'PYTHONHTTPSVERIFY': '0',
-                'HF_HUB_OFFLINE': '1',
-                'TRANSFORMERS_OFFLINE': '1'
-            })
+            print(f"📥 Using TTS audio: {extended_tts}")
+            print(f"📥 Using reference audio: {extended_ref}")
+            
+            # Set environment variables and try OpenVoice with smart fallback
+            try:
+                # First attempt: Online mode for model downloads
+                env = os.environ.copy()
+                env.update({
+                    'CURL_CA_BUNDLE': '',
+                    'REQUESTS_CA_BUNDLE': '',
+                    'SSL_VERIFY': '0',
+                    'PYTHONHTTPSVERIFY': '0'
+                })
 
-            subprocess.run([
-                sys.executable, "-m", "openvoice_cli", "single",
-                "-i", extended_tts,
-                "-r", extended_ref,
-                "-o", cloned_wav_path
-            ], check=True, env=env, timeout=60)
-            
-            # Clean up extended files if they were created
-            if extended_tts != tts_wav_path:
-                safe_delete(extended_tts)
-            if extended_ref != reference_wav_path:
-                safe_delete(extended_ref)
-            
-            print(f"✅ OpenVoice cloning successful: {cloned_wav_path}")
-            return
+                subprocess.run([
+                    sys.executable, "-m", "openvoice_cli", "single",
+                    "-i", extended_tts,
+                    "-r", extended_ref,
+                    "-o", cloned_wav_path
+                ], check=True, env=env, timeout=120)
+                
+                print(f"✅ OpenVoice cloning successful: {cloned_wav_path}")
+                
+                # Clean up extended files if they were created
+                if extended_tts != tts_wav_path:
+                    safe_delete(extended_tts)
+                if extended_ref != reference_wav_path:
+                    safe_delete(extended_ref)
+                return
+                
+            except subprocess.CalledProcessError as network_error:
+                # If network/model error, try offline mode with cached models
+                error_msg = str(network_error)
+                if any(keyword in error_msg.lower() for keyword in 
+                      ["localentrynotfound", "offlinemode", "cannot reach", 
+                       "connection", "ssl", "certificate"]):
+                    
+                    print("🌐 Network error, trying offline mode with cached models...")
+                    
+                    env_offline = os.environ.copy()
+                    env_offline.update({
+                        'CURL_CA_BUNDLE': '',
+                        'REQUESTS_CA_BUNDLE': '',
+                        'SSL_VERIFY': '0',
+                        'PYTHONHTTPSVERIFY': '0',
+                        'HF_HUB_OFFLINE': '1',
+                        'TRANSFORMERS_OFFLINE': '1'
+                    })
+                    
+                    try:
+                        subprocess.run([
+                            sys.executable, "-m", "openvoice_cli", "single",
+                            "-i", extended_tts,
+                            "-r", extended_ref,
+                            "-o", cloned_wav_path
+                        ], check=True, env=env_offline, timeout=60)
+                        
+                        print(f"✅ OpenVoice cloning successful (offline): {cloned_wav_path}")
+                        
+                        # Clean up extended files if they were created
+                        if extended_tts != tts_wav_path:
+                            safe_delete(extended_tts)
+                        if extended_ref != reference_wav_path:
+                            safe_delete(extended_ref)
+                        return
+                        
+                    except Exception:
+                        # If offline also fails, raise original error to trigger fallback
+                        raise network_error
+                else:
+                    # Re-raise if not a network-related error
+                    raise network_error
         except Exception as openvoice_error:
+            # Clean up extended files if they were created
+            if 'extended_tts' in locals() and extended_tts != tts_wav_path:
+                safe_delete(extended_tts)
+            if 'extended_ref' in locals() and extended_ref != reference_wav_path:
+                safe_delete(extended_ref)
+                
+            error_msg = str(openvoice_error)
             print(f"❌ OpenVoice failed: {openvoice_error}")
             
-            # Check if it's the "input audio is too short" error
-            if "too short" in str(openvoice_error).lower() or "AssertionError" in str(openvoice_error):
+            # Check if it's the "input audio is too short" error or related issues
+            if any(keyword in error_msg.lower() for keyword in ["too short", "assertionerror", "num_splits > 0"]):
                 print("⚡ Attempting minimal voice clone for short audio...")
                 if create_minimal_voice_clone(tts_wav_path, reference_wav_path, cloned_wav_path):
                     return
+            
+            # Check if it's an SSL or network related error
+            if any(keyword in error_msg.lower() for keyword in ["ssl", "certificate", "connection", "network"]):
+                print("🌐 Network/SSL error detected, skipping OpenVoice...")
+            
+            # Check if it's a model loading error
+            if any(keyword in error_msg.lower() for keyword in ["model", "checkpoint", "load", "download"]):
+                print("📦 Model loading error detected, trying alternative...")
             
         # Fallback: Simple voice cloning using audio manipulation
         print("🔄 Using simple voice cloning fallback...")
@@ -1290,4 +1352,26 @@ def create_minimal_voice_clone(tts_path: str, reference_path: str, output_path: 
         print(f"❌ Minimal voice clone failed: {e}")
         return False
 
-# ...existing code...
+if __name__ == "__main__":
+    if len(sys.argv) != 3:
+        print("Usage: python generate.py \"<Full Name>\" \"<Base Video Path>\"")
+        print("Example: python generate.py \"Atul Kadam\" \"templates/as.mp4\"")
+        sys.exit(1)
+
+    input_name = sys.argv[1]
+    base_video_path = sys.argv[2]
+    
+    try:
+        # Validate and fix common path issues
+        base_video_path = validate_and_fix_paths(base_video_path)
+        print(f"🎬 Processing: {input_name}")
+        print(f"📹 Video file: {base_video_path}")
+        asyncio.run(generate_progress(input_name, base_video_path))
+    except FileNotFoundError as e:
+        print(f"❌ File Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
