@@ -1143,11 +1143,71 @@ def analyze_segment_quality(segment_path: str):
     except Exception:
         return 0.5  # Default neutral score
 
+def validate_and_fix_paths(base_video_path: str) -> str:
+    """Validate and fix common path issues"""
+    # Convert backslashes to forward slashes
+    fixed_path = base_video_path.replace('\\', '/')
+    
+    # Check if file exists
+    if os.path.exists(fixed_path):
+        return fixed_path
+    
+    # Common fixes
+    common_fixes = [
+        # Fix template vs templates
+        fixed_path.replace('/template/', '/templates/'),
+        fixed_path.replace('\\template\\', '/templates/'),
+        # Try adding backend/ prefix if missing
+        f"backend/{fixed_path}" if not fixed_path.startswith('backend/') else fixed_path,
+        # Try relative path from current directory
+        os.path.join(os.getcwd(), fixed_path),
+        # Check if it's just a filename in templates
+        f"backend/templates/{os.path.basename(fixed_path)}" if not '/' in fixed_path and not '\\' in fixed_path else fixed_path
+    ]
+    
+    for attempt in common_fixes:
+        if os.path.exists(attempt):
+            print(f"📁 Fixed path: {base_video_path} → {attempt}")
+            return attempt
+    
+    # If no fixes work, provide helpful error
+    print(f"❌ Video file not found: {base_video_path}")
+    print("💡 Common solutions:")
+    print(f"   - Check if file exists: {os.path.abspath(fixed_path)}")
+    print(f"   - Try: backend/templates/as.mp4")
+    print(f"   - Available template files:")
+    
+    # List available template files
+    templates_dir = "backend/templates"
+    if os.path.exists(templates_dir):
+        for file in os.listdir(templates_dir):
+            if file.endswith('.mp4'):
+                print(f"     - {templates_dir}/{file}")
+    else:
+        print(f"     - Templates directory not found: {templates_dir}")
+    
+    raise FileNotFoundError(f"Video file not found: {base_video_path}")
+
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: python generate.py \"<Full Name>\" \"<Base Video Path>\"")
+        print("Example: python generate.py \"Atul Kadam\" \"backend/templates/as.mp4\"")
         sys.exit(1)
 
     input_name = sys.argv[1]
     base_video_path = sys.argv[2]
-    asyncio.run(generate_progress(input_name, base_video_path))
+    
+    # Validate and fix video path
+    try:
+        base_video_path = validate_and_fix_paths(base_video_path)
+        print(f"🎬 Processing: {input_name}")
+        print(f"📹 Video file: {base_video_path}")
+        asyncio.run(generate_progress(input_name, base_video_path))
+    except FileNotFoundError as e:
+        print(f"❌ File Error: {e}")
+        sys.exit(1)
+    except Exception as e:
+        print(f"❌ Unexpected error: {e}")
+        import traceback
+        traceback.print_exc()
+        sys.exit(1)
