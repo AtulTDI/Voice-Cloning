@@ -146,6 +146,49 @@ def run_basic_test():
     except Exception as e:
         print(f"❌ Cannot import generate.py: {e}")
 
+def check_audio_lengths():
+    """Check for short audio files that might cause OpenVoice issues"""
+    print("\n🎵 Checking Audio File Lengths:")
+    
+    audio_dirs = ["tts", "voice_reference", "cloned_voices", "backend/tts", "backend/voice_reference"]
+    short_files = []
+    
+    for audio_dir in audio_dirs:
+        if not os.path.exists(audio_dir):
+            continue
+            
+        print(f"📂 Checking: {audio_dir}")
+        
+        for root, dirs, files in os.walk(audio_dir):
+            for file in files:
+                if file.endswith('.wav'):
+                    file_path = os.path.join(root, file)
+                    
+                    try:
+                        # Get audio duration using FFmpeg
+                        result = subprocess.run([
+                            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+                            '-of', 'csv=p=0', file_path
+                        ], capture_output=True, text=True, check=True)
+                        
+                        duration = float(result.stdout.strip())
+                        
+                        if duration < 3.0:  # Less than 3 seconds
+                            short_files.append((file_path, duration))
+                            print(f"⚠️  Short audio: {file} ({duration:.2f}s)")
+                        else:
+                            print(f"✅ {file} ({duration:.2f}s)")
+                            
+                    except Exception as e:
+                        print(f"❌ Could not check {file}: {e}")
+    
+    if short_files:
+        print(f"\n⚠️  Found {len(short_files)} short audio files")
+        print("💡 These may cause 'input audio is too short' errors")
+        print("💡 Run: python fix_short_audio.py to fix them")
+    else:
+        print("✅ No problematically short audio files found")
+
 def main():
     """Main troubleshooting function"""
     print("🔧 Voice Cloning Troubleshooting Tool")
@@ -158,6 +201,7 @@ def main():
     check_ffmpeg()
     check_required_modules()
     run_basic_test()
+    check_audio_lengths()
     
     print("\n" + "=" * 50)
     print("🎯 Troubleshooting Complete!")
@@ -167,6 +211,8 @@ def main():
     print("   3. Use correct path: backend/templates/as.mp4 (not backend/template/as.mp4)")
     print("   4. Make sure you're in the project root directory")
     print("   5. Check Python version is 3.8+")
+    print("   6. Fix short audio files: python fix_short_audio.py")
+    print("   7. For OpenVoice 'too short' errors, audio files will be auto-extended")
 
 if __name__ == "__main__":
     main()

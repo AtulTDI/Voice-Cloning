@@ -189,6 +189,11 @@ def clone_voice(tts_wav_path: str, cloned_wav_path: str, reference_wav_path: str
         # Try OpenVoice first with offline environment
         try:
             print("🧬 Attempting OpenVoice cloning...")
+            
+            # Extend audio files if they're too short for voice cloning
+            extended_tts = extend_short_audio(tts_wav_path, min_duration=3.0)
+            extended_ref = extend_short_audio(reference_wav_path, min_duration=5.0)
+            
             # Set environment variables for SSL bypass and offline mode
             env = os.environ.copy()
             env.update({
@@ -202,14 +207,27 @@ def clone_voice(tts_wav_path: str, cloned_wav_path: str, reference_wav_path: str
 
             subprocess.run([
                 sys.executable, "-m", "openvoice_cli", "single",
-                "-i", tts_wav_path,
-                "-r", reference_wav_path,
+                "-i", extended_tts,
+                "-r", extended_ref,
                 "-o", cloned_wav_path
-            ], check=True, env=env, timeout=30)
+            ], check=True, env=env, timeout=60)
+            
+            # Clean up extended files if they were created
+            if extended_tts != tts_wav_path:
+                safe_delete(extended_tts)
+            if extended_ref != reference_wav_path:
+                safe_delete(extended_ref)
+            
             print(f"✅ OpenVoice cloning successful: {cloned_wav_path}")
             return
         except Exception as openvoice_error:
             print(f"❌ OpenVoice failed: {openvoice_error}")
+            
+            # Check if it's the "input audio is too short" error
+            if "too short" in str(openvoice_error).lower() or "AssertionError" in str(openvoice_error):
+                print("⚡ Attempting minimal voice clone for short audio...")
+                if create_minimal_voice_clone(tts_wav_path, reference_wav_path, cloned_wav_path):
+                    return
             
         # Fallback: Simple voice cloning using audio manipulation
         print("🔄 Using simple voice cloning fallback...")
@@ -1188,26 +1206,88 @@ def validate_and_fix_paths(base_video_path: str) -> str:
     
     raise FileNotFoundError(f"Video file not found: {base_video_path}")
 
-if __name__ == "__main__":
-    if len(sys.argv) != 3:
-        print("Usage: python generate.py \"<Full Name>\" \"<Base Video Path>\"")
-        print("Example: python generate.py \"Atul Kadam\" \"backend/templates/as.mp4\"")
-        sys.exit(1)
-
-    input_name = sys.argv[1]
-    base_video_path = sys.argv[2]
-    
-    # Validate and fix video path
+def extend_short_audio(audio_path: str, min_duration: float = 3.0) -> str:
+    """Extend audio file if it's too short for voice cloning"""
     try:
-        base_video_path = validate_and_fix_paths(base_video_path)
-        print(f"🎬 Processing: {input_name}")
-        print(f"📹 Video file: {base_video_path}")
-        asyncio.run(generate_progress(input_name, base_video_path))
-    except FileNotFoundError as e:
-        print(f"❌ File Error: {e}")
-        sys.exit(1)
+        import subprocess
+        import tempfile
+        
+        # Get audio duration
+        result = subprocess.run([
+            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'csv=p=0', audio_path
+        ], capture_output=True, text=True, check=True)
+        
+        duration = float(result.stdout.strip())
+        print(f"🕒 Audio duration: {duration:.2f}s")
+        
+        if duration < min_duration:
+            print(f"⚡ Extending short audio from {duration:.2f}s to {min_duration:.2f}s")
+            
+            # Calculate how many times to repeat
+            repeat_count = int((min_duration / duration) + 1)
+            
+            # Create the extended audio file
+            base_name = os.path.splitext(audio_path)[0]
+            extended_path = f"{base_name}_extended.wav"
+            
+            # Use FFmpeg to concatenate the audio file with itself
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False) as f:
+                for _ in range(repeat_count):
+                    f.write(f"file '{os.path.abspath(audio_path)}'\n")
+                concat_file = f.name
+            
+            try:
+                subprocess.run([
+                    'ffmpeg', '-y', '-f', 'concat', '-safe', '0',
+                    '-i', concat_file, '-t', str(min_duration),
+                    '-acodec', 'copy', extended_path
+                ], check=True, capture_output=True)
+                
+                os.unlink(concat_file)
+                print(f"✅ Extended audio saved: {extended_path}")
+                return extended_path
+                
+            except subprocess.CalledProcessError as e:
+                # Fallback: use simple repeat with silence padding
+                subprocess.run([
+                    'ffmpeg', '-y', '-i', audio_path,
+                    '-filter_complex', f'[0:a]aloop=loop={repeat_count-1}:size=44100*{min_duration}[out]',
+                    '-map', '[out]', '-t', str(min_duration), extended_path
+                ], check=True, capture_output=True)
+                
+                print(f"✅ Extended audio with loop: {extended_path}")
+                return extended_path
+        else:
+            return audio_path
+            
     except Exception as e:
-        print(f"❌ Unexpected error: {e}")
-        import traceback
-        traceback.print_exc()
-        sys.exit(1)
+        print(f"⚠️ Could not extend audio: {e}")
+        return audio_path
+
+def create_minimal_voice_clone(tts_path: str, reference_path: str, output_path: str):
+    """Create a minimal voice clone when OpenVoice fails due to short audio"""
+    try:
+        print("🔄 Creating minimal voice clone...")
+        
+        # Use FFmpeg to apply basic voice modification
+        subprocess.run([
+            'ffmpeg', '-y',
+            '-i', tts_path,
+            '-i', reference_path,
+            '-filter_complex',
+            '[0:a]atempo=0.95,rubberband=pitch=0.95[tts];'
+            '[1:a]compand=attacks=0.3:decays=1.2:points=-80/-80|-12.4/-12.4|-6/-8|0/-6.8[ref];'
+            '[tts][ref]amix=inputs=2:duration=first:weights=0.7 0.3',
+            '-ar', '24000', '-ac', '1',
+            output_path
+        ], check=True, capture_output=True)
+        
+        print(f"✅ Minimal voice clone created: {output_path}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ Minimal voice clone failed: {e}")
+        return False
+
+# ...existing code...
