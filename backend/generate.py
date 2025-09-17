@@ -1352,6 +1352,89 @@ def create_minimal_voice_clone(tts_path: str, reference_path: str, output_path: 
         print(f"❌ Minimal voice clone failed: {e}")
         return False
 
+def validate_video_duration(video_path, min_duration=10.0):
+    """Validate that video meets minimum duration requirements and extend if needed"""
+    try:
+        # Check video duration
+        result = subprocess.run([
+            'ffprobe', '-v', 'quiet', '-show_entries', 'format=duration',
+            '-of', 'csv=p=0', video_path
+        ], capture_output=True, text=True, check=True)
+        
+        duration = float(result.stdout.strip())
+        print(f"📹 Video duration: {duration:.2f} seconds")
+        
+        if duration < min_duration:
+            print(f"⚠️ Video duration ({duration:.2f}s) is less than minimum ({min_duration}s)")
+            
+            # Try to extend the video by looping
+            base_name = os.path.splitext(video_path)[0]
+            extended_path = f"{base_name}_extended.mp4"
+            
+            # Calculate loop count needed
+            loop_count = int(min_duration / duration) + 1
+            
+            print(f"🔄 Extending video by looping {loop_count} times...")
+            subprocess.run([
+                'ffmpeg', '-y', '-stream_loop', str(loop_count-1), 
+                '-i', video_path, '-t', str(min_duration),
+                '-c', 'copy', extended_path
+            ], check=True)
+            
+            print(f"✅ Extended video created: {extended_path}")
+            return extended_path
+            
+        return video_path
+        
+    except Exception as e:
+        print(f"❌ Video validation failed: {e}")
+        return video_path
+
+def setup_openvoice_environment():
+    """Set up OpenVoice environment and download models if needed"""
+    try:
+        print("🚀 Setting up OpenVoice environment...")
+        
+        # Create OpenVoice directory structure
+        openvoice_dir = "openvoice"
+        checkpoints_dir = os.path.join(openvoice_dir, "checkpoints") 
+        base_speakers_dir = os.path.join(checkpoints_dir, "base_speakers", "EN")
+        converter_dir = os.path.join(checkpoints_dir, "converter")
+        
+        for directory in [openvoice_dir, checkpoints_dir, base_speakers_dir, converter_dir]:
+            os.makedirs(directory, exist_ok=True)
+        
+        # Set HuggingFace cache to local directory
+        os.environ["HF_HUB_CACHE"] = os.path.join(openvoice_dir, "models")
+        os.environ["HF_HOME"] = os.path.join(openvoice_dir, "hf_home")
+        
+        print(f"✅ OpenVoice environment ready: {openvoice_dir}")
+        return True
+        
+    except Exception as e:
+        print(f"❌ OpenVoice environment setup failed: {e}")
+        return False
+
+def validate_and_fix_paths(video_path):
+    """Validate and fix common path issues"""
+    # Fix common path variations
+    if video_path.startswith("template/"):
+        video_path = video_path.replace("template/", "templates/")
+    
+    if not os.path.exists(video_path):
+        # Try with templates/ prefix
+        if not video_path.startswith("templates/"):
+            alt_path = os.path.join("templates", os.path.basename(video_path))
+            if os.path.exists(alt_path):
+                print(f"🔄 Fixed path: {video_path} -> {alt_path}")
+                video_path = alt_path
+    
+    if not os.path.exists(video_path):
+        raise FileNotFoundError(f"Video file not found: {video_path}")
+    
+    # Validate video duration and extend if needed
+    return validate_video_duration(video_path)
+
 if __name__ == "__main__":
     if len(sys.argv) != 3:
         print("Usage: python generate.py \"<Full Name>\" \"<Base Video Path>\"")
@@ -1362,10 +1445,14 @@ if __name__ == "__main__":
     base_video_path = sys.argv[2]
     
     try:
+        # Set up OpenVoice environment first
+        setup_openvoice_environment()
+        
         # Validate and fix common path issues
         base_video_path = validate_and_fix_paths(base_video_path)
         print(f"🎬 Processing: {input_name}")
         print(f"📹 Video file: {base_video_path}")
+        
         asyncio.run(generate_progress(input_name, base_video_path))
     except FileNotFoundError as e:
         print(f"❌ File Error: {e}")
